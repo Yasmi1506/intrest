@@ -6,7 +6,7 @@ import { useNavigate } from "react-router-dom";
 
 const PinterestClone = () => {
   const [images, setImages] = useState([]);
-  const [searchQuery, setSearchQuery] = useState("nature");
+  const [searchQuery, setSearchQuery] = useState("music");
   const [loading, setLoading] = useState(false);
   const [selectedImage, setSelectedImage] = useState(null);
   const [page, setPage] = useState(1);
@@ -102,7 +102,7 @@ const PinterestClone = () => {
       <header className="fixed top-0 left-0 right-0 bg-white z-50 shadow-sm">
         <div className="max-w-screen-2xl mx-auto px-4 py-3 flex items-center gap-4">
           <div className="flex items-center gap-6">
-            <h1 className="text-2xl font-bold text-red-600">Intrest</h1>
+            <h1 className="text-2xl font-bold text-red-600">Snaply</h1>
             <nav className="hidden md:flex gap-4">
               <button className="px-4 py-2 rounded-full bg-black text-white hover:bg-gray-800 flex items-center gap-1">
                 <Home size={18} /> Home
