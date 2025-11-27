@@ -1,8 +1,5 @@
-// src/components/PinterestClone.jsx
 import React, { useState, useEffect, useRef } from "react";
-import { Search, Heart, Download, X, Home, Bell, LogOut } from "lucide-react";
-import { auth, logout } from "../firebase/firebase";
-import { useNavigate } from "react-router-dom";
+import { Search, Heart, Download, X, Home, Bell, LogOut, Sparkles, AlertCircle, Info } from "lucide-react";
 
 const PinterestClone = () => {
   const [images, setImages] = useState([]);
@@ -10,12 +7,26 @@ const PinterestClone = () => {
   const [loading, setLoading] = useState(false);
   const [selectedImage, setSelectedImage] = useState(null);
   const [page, setPage] = useState(1);
+
+  // AI Modal State
+  const [aiPrompt, setAiPrompt] = useState("");
+  const [aiModal, setAiModal] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState("");
+  const [aiSuccess, setAiSuccess] = useState("");
+
   const observer = useRef();
   const lastImageRef = useRef();
-  const navigate = useNavigate();
 
-  const UNSPLASH_ACCESS_KEY = import.meta.env.VITE_UNSPLASH_ACCESS_KEY;
+  const UNSPLASH_ACCESS_KEY = import.meta.env.VITE_UNSPLASH_ACCESS_KEY
+  
+  // Multiple free AI API options
+  const AI_APIS = {
+    pollinations: "https://image.pollinations.ai/prompt/",
+    picsum: "https://picsum.photos/seed/", // Fallback placeholder
+  };
 
+  // --------------------------- FETCH IMAGES FROM UNSPLASH ---------------------------
   const fetchImages = async (query, pageNum) => {
     setLoading(true);
     try {
@@ -23,10 +34,10 @@ const PinterestClone = () => {
         `https://api.unsplash.com/search/photos?query=${query}&page=${pageNum}&per_page=30&client_id=${UNSPLASH_ACCESS_KEY}`
       );
       const data = await resp.json();
-      if (pageNum === 1) setImages(data.results);
-      else setImages((prev) => [...prev, ...data.results]);
+      if (pageNum === 1) setImages(data.results || []);
+      else setImages((prev) => [...prev, ...(data.results || [])]);
     } catch (e) {
-      console.error(e);
+      console.error("Unsplash error:", e);
     }
     setLoading(false);
   };
@@ -52,13 +63,144 @@ const PinterestClone = () => {
     fetchImages(searchQuery, 1);
   };
 
-  const handleLogout = async () => {
-    await logout();
-    navigate("/login");
+  // --------------------------- AI IMAGE GENERATION (FREE) ---------------------------
+  const generateAIImage = async () => {
+    if (!aiPrompt.trim()) {
+      setAiError("Please enter a prompt");
+      return;
+    }
+
+    setAiLoading(true);
+    setAiError("");
+    setAiSuccess("");
+
+    try {
+      // Using Pollinations.ai - Free, no API key needed
+      const encodedPrompt = encodeURIComponent(aiPrompt);
+      const imageUrl = `${AI_APIS.pollinations}${encodedPrompt}?width=800&height=800&seed=${Date.now()}`;
+      
+      // Test if image loads
+      const testImage = new Image();
+      testImage.crossOrigin = "anonymous";
+      
+      await new Promise((resolve, reject) => {
+        testImage.onload = resolve;
+        testImage.onerror = reject;
+        testImage.src = imageUrl;
+      });
+
+      // If successful, add to gallery
+      const aiImageObj = {
+        id: `ai-${Date.now()}`,
+        urls: { 
+          small: imageUrl, 
+          regular: imageUrl,
+          full: imageUrl
+        },
+        alt_description: aiPrompt,
+        user: {
+          name: "AI Generated",
+          profile_image: { small: "https://ui-avatars.com/api/?name=AI&background=ef4444&color=fff" },
+        },
+        isAI: true,
+      };
+
+      setImages((prev) => [aiImageObj, ...prev]);
+      setAiSuccess("Image generated successfully! 🎨");
+      
+      // Auto close modal after success
+      setTimeout(() => {
+        setAiModal(false);
+        setAiPrompt("");
+        setAiSuccess("");
+      }, 2000);
+
+    } catch (err) {
+      console.error("AI Error:", err);
+      setAiError("Failed to generate image. Please try again with a different prompt.");
+    }
+    setAiLoading(false);
   };
 
-  const user = auth.currentUser;
+  // Alternative: Generate using Stable Diffusion via Hugging Face
+  const generateWithHuggingFace = async (apiKey) => {
+    if (!apiKey) {
+      setAiError("Please add your Hugging Face API key");
+      return;
+    }
 
+    try {
+      const response = await fetch(
+        "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0",
+        {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            inputs: aiPrompt,
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`API Error: ${response.status}`);
+      }
+
+      const blob = await response.blob();
+      const imageUrl = URL.createObjectURL(blob);
+
+      const aiImageObj = {
+        id: `ai-${Date.now()}`,
+        urls: { 
+          small: imageUrl, 
+          regular: imageUrl,
+          full: imageUrl
+        },
+        alt_description: aiPrompt,
+        user: {
+          name: "AI Generated (Stable Diffusion)",
+          profile_image: { small: "https://ui-avatars.com/api/?name=SD&background=ef4444&color=fff" },
+        },
+        isAI: true,
+      };
+
+      setImages((prev) => [aiImageObj, ...prev]);
+      setAiSuccess("Image generated successfully! 🎨");
+      
+      setTimeout(() => {
+        setAiModal(false);
+        setAiPrompt("");
+        setAiSuccess("");
+      }, 2000);
+
+    } catch (err) {
+      console.error("Hugging Face Error:", err);
+      setAiError(`Failed to generate: ${err.message}`);
+    }
+  };
+
+  // --------------------------- DOWNLOAD IMAGE ---------------------------
+  const handleDownload = async (imageUrl, filename) => {
+    try {
+      const response = await fetch(imageUrl);
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename || 'snaply-image.jpg';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Download error:", err);
+      alert("Failed to download image");
+    }
+  };
+
+  // --------------------------- IMAGE CARD ---------------------------
   const ImageCard = ({ image, index }) => {
     const [hovered, setHovered] = useState(false);
     return (
@@ -75,10 +217,25 @@ const PinterestClone = () => {
           className="w-full rounded-2xl object-cover"
           loading="lazy"
         />
+        {image.isAI && (
+          <div className="absolute top-2 left-2 bg-gradient-to-r from-red-600 to-pink-600 text-white px-3 py-1 rounded-full text-xs font-semibold flex items-center gap-1 shadow-lg">
+            <Sparkles size={12} />
+            AI
+          </div>
+        )}
         {hovered && (
           <div className="absolute inset-0 bg-black bg-opacity-40 rounded-2xl flex flex-col justify-between p-4">
-            <div className="flex justify-end">
-              <button className="bg-red-600 hover:bg-red-700 text-white p-2 rounded-full">
+            <div className="flex justify-end gap-2">
+              <button 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleDownload(image.urls.regular, `snaply-${image.id}.jpg`);
+                }}
+                className="bg-white hover:bg-gray-100 text-gray-800 p-2 rounded-full shadow-lg transition-transform hover:scale-110"
+              >
+                <Download size={18} />
+              </button>
+              <button className="bg-red-600 hover:bg-red-700 text-white p-2 rounded-full shadow-lg transition-transform hover:scale-110">
                 <Heart size={18} />
               </button>
             </div>
@@ -96,6 +253,7 @@ const PinterestClone = () => {
     );
   };
 
+  // --------------------------- MAIN UI ---------------------------
   return (
     <div className="min-h-screen bg-white">
       {/* ---------- HEADER ---------- */}
@@ -110,12 +268,19 @@ const PinterestClone = () => {
               <button className="px-4 py-2 rounded-full hover:bg-gray-100">
                 Explore
               </button>
-              <button className="px-4 py-2 rounded-full hover:bg-gray-100">
-                Create
+
+              {/* AI CREATE BUTTON */}
+              <button
+                onClick={() => setAiModal(true)}
+                className="px-4 py-2 rounded-full bg-gradient-to-r from-red-600 to-pink-600 text-white hover:from-red-700 hover:to-pink-700 flex items-center gap-2 shadow-md"
+              >
+                <Sparkles size={18} />
+                AI Create
               </button>
             </nav>
           </div>
 
+          {/* SEARCH BAR */}
           <div className="flex-1 max-w-3xl">
             <div className="relative">
               <Search
@@ -133,39 +298,12 @@ const PinterestClone = () => {
             </div>
           </div>
 
+          {/* USER SECTION */}
           <div className="flex items-center gap-3">
             <button className="p-2 hover:bg-gray-100 rounded-full">
               <Bell size={24} className="text-gray-600" />
             </button>
-
-            {user ? (
-              <div className="flex items-center gap-3">
-                <img
-                  src={
-                    user.photoURL ||
-                    `https://ui-avatars.com/api/?name=${encodeURIComponent(
-                      user.displayName || user.email
-                    )}`
-                  }
-                  alt={user.displayName || user.email}
-                  className="w-9 h-9 rounded-full object-cover"
-                />
-                <button
-                  onClick={handleLogout}
-                  className="p-2 hover:bg-gray-100 rounded-full"
-                  title="Logout"
-                >
-                  <LogOut size={20} className="text-gray-600" />
-                </button>
-              </div>
-            ) : (
-              <button
-                onClick={() => navigate("/login")}
-                className="px-4 py-2 bg-red-600 text-white rounded-full hover:bg-red-700 text-sm font-medium"
-              >
-                Login
-              </button>
-            )}
+            <div className="w-9 h-9 rounded-full bg-gradient-to-r from-red-600 to-pink-600"></div>
           </div>
         </div>
       </header>
@@ -195,7 +333,7 @@ const PinterestClone = () => {
         )}
       </main>
 
-      {/* ---------- MODAL ---------- */}
+      {/* ---------- IMAGE MODAL ---------- */}
       {selectedImage && (
         <div
           className="fixed inset-0 bg-black bg-opacity-90 z-50 flex items-center justify-center p-4"
@@ -212,65 +350,117 @@ const PinterestClone = () => {
             className="max-w-6xl w-full flex flex-col md:flex-row gap-4"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex-1 flex items-center justify-center">
+            <div className="flex-1 flex flex-col items-center justify-center gap-4">
               <img
                 src={selectedImage.urls.regular}
                 alt={selectedImage.alt_description || ""}
-                className="max-w-full max-h-[80vh] rounded-2xl object-contain"
+                className="max-w-full max-h-[75vh] rounded-2xl object-contain shadow-2xl"
               />
+              
+              {/* Download Button in Modal */}
+              <button
+                onClick={() => handleDownload(selectedImage.urls.full || selectedImage.urls.regular, `snaply-${selectedImage.id}.jpg`)}
+                className="bg-gradient-to-r from-red-600 to-pink-600 hover:from-red-700 hover:to-pink-700 text-white px-6 py-3 rounded-full flex items-center gap-2 font-medium shadow-lg transition-transform hover:scale-105"
+              >
+                <Download size={20} />
+                Download Image
+              </button>
+
+              {/* Image Info */}
+              <div className="bg-white rounded-xl p-4 flex items-center gap-3 shadow-lg">
+                <img
+                  src={selectedImage.user.profile_image.small}
+                  alt={selectedImage.user.name}
+                  className="w-12 h-12 rounded-full"
+                />
+                <div>
+                  <p className="font-semibold text-gray-800">{selectedImage.user.name}</p>
+                  {selectedImage.alt_description && (
+                    <p className="text-sm text-gray-600">{selectedImage.alt_description}</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --------------------------- AI GENERATION MODAL --------------------------- */}
+      {aiModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center p-4">
+          <div className="bg-white p-6 rounded-2xl max-w-md w-full shadow-2xl">
+            <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+              <Sparkles className="text-red-600" /> Generate AI Image
+            </h2>
+
+            <textarea
+              value={aiPrompt}
+              onChange={(e) => setAiPrompt(e.target.value)}
+              placeholder="Describe the image you want... (e.g., 'a futuristic city at sunset with flying cars')"
+              className="w-full h-28 p-3 border rounded-xl bg-gray-50 focus:ring-2 focus:ring-red-500 outline-none resize-none"
+            ></textarea>
+
+            {/* Info about free API */}
+            <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg flex items-start gap-2">
+              <Info size={18} className="text-blue-600 flex-shrink-0 mt-0.5" />
+              <p className="text-xs text-blue-700">Using free Pollinations.ai API - No API key needed!</p>
             </div>
 
-            <div className="bg-white rounded-2xl p-6 w-full md:w-96 max-h-[80vh] overflow-y-auto">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-3">
-                  <img
-                    src={selectedImage.user.profile_image.medium}
-                    alt={selectedImage.user.name}
-                    className="w-12 h-12 rounded-full"
-                  />
-                  <div>
-                    <h3 className="font-semibold">{selectedImage.user.name}</h3>
-                    <p className="text-sm text-gray-500">
-                      @{selectedImage.user.username}
-                    </p>
-                  </div>
-                </div>
-                <button className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-full text-sm">
-                  Follow
-                </button>
+            {/* Status Messages */}
+            {aiError && (
+              <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2">
+                <AlertCircle size={18} className="text-red-600 flex-shrink-0 mt-0.5" />
+                <p className="text-sm text-red-700">{aiError}</p>
               </div>
+            )}
 
-              <h2 className="text-xl font-bold mb-2">
-                {selectedImage.alt_description || "Untitled"}
-              </h2>
-              <p className="text-gray-600 mb-4">
-                {selectedImage.description || "No description"}
-              </p>
-
-              <div className="flex gap-2 mb-4">
-                <button className="flex-1 bg-gray-100 hover:bg-gray-200 py-3 rounded-full font-semibold flex items-center justify-center gap-2">
-                  <Heart size={18} /> Save
-                </button>
-                <a
-                  href={`${selectedImage.links.download}?force=true`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex-1 bg-black hover:bg-gray-800 text-white py-3 rounded-full font-semibold flex items-center justify-center gap-2"
-                >
-                  <Download size={18} /> Download
-                </a>
+            {aiSuccess && (
+              <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-lg flex items-start gap-2">
+                <Sparkles size={18} className="text-green-600 flex-shrink-0 mt-0.5" />
+                <p className="text-sm text-green-700">{aiSuccess}</p>
               </div>
+            )}
 
-              <div className="border-t pt-4 space-y-1 text-sm text-gray-500">
-                <p>
-                  <strong>Views:</strong>{" "}
-                  {selectedImage.views?.toLocaleString() || "N/A"}
-                </p>
-                <p>
-                  <strong>Likes:</strong>{" "}
-                  {selectedImage.likes?.toLocaleString() || "N/A"}
+            {aiLoading && (
+              <div className="mt-3 p-3 bg-purple-50 border border-purple-200 rounded-lg">
+                <p className="text-sm text-purple-700 flex items-center gap-2">
+                  <div className="w-4 h-4 border-2 border-purple-600 border-t-transparent rounded-full animate-spin"></div>
+                  Generating your AI masterpiece... This may take 5-15 seconds.
                 </p>
               </div>
+            )}
+
+            <div className="flex justify-end gap-2 mt-4">
+              <button
+                onClick={() => {
+                  setAiModal(false);
+                  setAiPrompt("");
+                  setAiError("");
+                  setAiSuccess("");
+                }}
+                disabled={aiLoading}
+                className="px-4 py-2 bg-gray-200 rounded-full hover:bg-gray-300 disabled:opacity-50 transition"
+              >
+                Cancel
+              </button>
+
+              <button
+                onClick={generateAIImage}
+                disabled={aiLoading || !aiPrompt.trim()}
+                className="px-4 py-2 bg-gradient-to-r from-red-600 to-pink-600 text-white rounded-full hover:from-red-700 hover:to-pink-700 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed transition shadow-md"
+              >
+                {aiLoading ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                    Generating...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles size={18} />
+                    Generate
+                  </>
+                )}
+              </button>
             </div>
           </div>
         </div>
