@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Search, Heart, Download, X, Home, Bell, LogOut, Sparkles, AlertCircle, Info } from "lucide-react";
+import { auth, logout } from "../firebase/firebase";   // <-- make sure this path is correct
+import { signOut } from "firebase/auth";
 
 const PinterestClone = () => {
   const [images, setImages] = useState([]);
@@ -7,26 +9,44 @@ const PinterestClone = () => {
   const [loading, setLoading] = useState(false);
   const [selectedImage, setSelectedImage] = useState(null);
   const [page, setPage] = useState(1);
+  const [user, setUser] = useState(null);
 
-  // AI Modal State
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiModal, setAiModal] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState("");
   const [aiSuccess, setAiSuccess] = useState("");
+  const [imageLoadFailed, setImageLoadFailed] = useState(false);
 
   const observer = useRef();
   const lastImageRef = useRef();
 
-  const UNSPLASH_ACCESS_KEY = import.meta.env.VITE_UNSPLASH_ACCESS_KEY
-  
-  // Multiple free AI API options
-  const AI_APIS = {
-    pollinations: "https://image.pollinations.ai/prompt/",
-    picsum: "https://picsum.photos/seed/", // Fallback placeholder
+  const UNSPLASH_ACCESS_KEY = import.meta.env.VITE_UNSPLASH_ACCESS_KEY;
+
+  // Get current user
+  useEffect(() => {
+    const unsubscribe = auth.onAuthStateChanged((currentUser) => {
+      setUser(currentUser);
+      setImageLoadFailed(false); // Reset image load state when user changes
+      console.log("Current user:", currentUser);
+      console.log("User photoURL:", currentUser?.photoURL);
+      console.log("User displayName:", currentUser?.displayName);
+    });
+    return unsubscribe;
+  }, []);
+
+  // LOGOUT FUNCTION -------------------------
+  const handleLogout = async () => {
+    try {
+      await signOut(auth); // Firebase logout
+      console.log("Logged out");
+      window.location.href = "/login";  // Redirect (optional)
+    } catch (err) {
+      console.error("Logout error:", err);
+    }
   };
 
-  // --------------------------- FETCH IMAGES FROM UNSPLASH ---------------------------
+  // --------------------------- UNSPLASH FETCH ---------------------------
   const fetchImages = async (query, pageNum) => {
     setLoading(true);
     try {
@@ -63,7 +83,12 @@ const PinterestClone = () => {
     fetchImages(searchQuery, 1);
   };
 
-  // --------------------------- AI IMAGE GENERATION (FREE) ---------------------------
+  // --------------------------- AI GENERATION ---------------------------
+  const AI_APIS = {
+    pollinations: "https://image.pollinations.ai/prompt/",
+    picsum: "https://picsum.photos/seed/",
+  };
+
   const generateAIImage = async () => {
     if (!aiPrompt.trim()) {
       setAiError("Please enter a prompt");
@@ -75,28 +100,19 @@ const PinterestClone = () => {
     setAiSuccess("");
 
     try {
-      // Using Pollinations.ai - Free, no API key needed
-      const encodedPrompt = encodeURIComponent(aiPrompt);
-      const imageUrl = `${AI_APIS.pollinations}${encodedPrompt}?width=800&height=800&seed=${Date.now()}`;
-      
-      // Test if image loads
+      const encoded = encodeURIComponent(aiPrompt);
+      const imageUrl = `${AI_APIS.pollinations}${encoded}?width=800&height=800&seed=${Date.now()}`;
+
       const testImage = new Image();
-      testImage.crossOrigin = "anonymous";
-      
       await new Promise((resolve, reject) => {
         testImage.onload = resolve;
         testImage.onerror = reject;
         testImage.src = imageUrl;
       });
 
-      // If successful, add to gallery
       const aiImageObj = {
         id: `ai-${Date.now()}`,
-        urls: { 
-          small: imageUrl, 
-          regular: imageUrl,
-          full: imageUrl
-        },
+        urls: { small: imageUrl, regular: imageUrl, full: imageUrl },
         alt_description: aiPrompt,
         user: {
           name: "AI Generated",
@@ -107,102 +123,37 @@ const PinterestClone = () => {
 
       setImages((prev) => [aiImageObj, ...prev]);
       setAiSuccess("Image generated successfully! 🎨");
-      
-      // Auto close modal after success
+
       setTimeout(() => {
         setAiModal(false);
         setAiPrompt("");
         setAiSuccess("");
       }, 2000);
-
     } catch (err) {
-      console.error("AI Error:", err);
-      setAiError("Failed to generate image. Please try again with a different prompt.");
+      console.error("AI error:", err);
+      setAiError("Failed to generate image");
     }
+
     setAiLoading(false);
   };
 
-  // Alternative: Generate using Stable Diffusion via Hugging Face
-  const generateWithHuggingFace = async (apiKey) => {
-    if (!apiKey) {
-      setAiError("Please add your Hugging Face API key");
-      return;
-    }
-
+  const handleDownload = async (url, filename) => {
     try {
-      const response = await fetch(
-        "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0",
-        {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${apiKey}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            inputs: aiPrompt,
-          }),
-        }
-      );
-
-      if (!response.ok) {
-        throw new Error(`API Error: ${response.status}`);
-      }
-
+      const response = await fetch(url);
       const blob = await response.blob();
-      const imageUrl = URL.createObjectURL(blob);
-
-      const aiImageObj = {
-        id: `ai-${Date.now()}`,
-        urls: { 
-          small: imageUrl, 
-          regular: imageUrl,
-          full: imageUrl
-        },
-        alt_description: aiPrompt,
-        user: {
-          name: "AI Generated (Stable Diffusion)",
-          profile_image: { small: "https://ui-avatars.com/api/?name=SD&background=ef4444&color=fff" },
-        },
-        isAI: true,
-      };
-
-      setImages((prev) => [aiImageObj, ...prev]);
-      setAiSuccess("Image generated successfully! 🎨");
-      
-      setTimeout(() => {
-        setAiModal(false);
-        setAiPrompt("");
-        setAiSuccess("");
-      }, 2000);
-
-    } catch (err) {
-      console.error("Hugging Face Error:", err);
-      setAiError(`Failed to generate: ${err.message}`);
-    }
-  };
-
-  // --------------------------- DOWNLOAD IMAGE ---------------------------
-  const handleDownload = async (imageUrl, filename) => {
-    try {
-      const response = await fetch(imageUrl);
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = filename || 'snaply-image.jpg';
-      document.body.appendChild(link);
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = filename || "snaply-image.jpg";
       link.click();
-      document.body.removeChild(link);
-      window.URL.revokeObjectURL(url);
     } catch (err) {
       console.error("Download error:", err);
-      alert("Failed to download image");
     }
   };
 
   // --------------------------- IMAGE CARD ---------------------------
   const ImageCard = ({ image, index }) => {
     const [hovered, setHovered] = useState(false);
+
     return (
       <div
         ref={index === images.length - 1 ? lastImageRef : null}
@@ -211,41 +162,26 @@ const PinterestClone = () => {
         onMouseLeave={() => setHovered(false)}
         onClick={() => setSelectedImage(image)}
       >
-        <img
-          src={image.urls.small}
-          alt={image.alt_description || ""}
-          className="w-full rounded-2xl object-cover"
-          loading="lazy"
-        />
+        <img src={image.urls.small} alt="" className="w-full rounded-2xl object-cover" loading="lazy" />
+
         {image.isAI && (
-          <div className="absolute top-2 left-2 bg-gradient-to-r from-red-600 to-pink-600 text-white px-3 py-1 rounded-full text-xs font-semibold flex items-center gap-1 shadow-lg">
-            <Sparkles size={12} />
-            AI
+          <div className="absolute top-2 left-2 bg-red-600 text-white px-3 py-1 rounded-full text-xs flex gap-1">
+            <Sparkles size={12} /> AI
           </div>
         )}
+
         {hovered && (
-          <div className="absolute inset-0 bg-black bg-opacity-40 rounded-2xl flex flex-col justify-between p-4">
+          <div className="absolute inset-0 bg-black bg-opacity-40 rounded-2xl p-4 flex flex-col justify-between">
             <div className="flex justify-end gap-2">
-              <button 
+              <button
                 onClick={(e) => {
                   e.stopPropagation();
                   handleDownload(image.urls.regular, `snaply-${image.id}.jpg`);
                 }}
-                className="bg-white hover:bg-gray-100 text-gray-800 p-2 rounded-full shadow-lg transition-transform hover:scale-110"
+                className="bg-white p-2 rounded-full shadow"
               >
                 <Download size={18} />
               </button>
-              <button className="bg-red-600 hover:bg-red-700 text-white p-2 rounded-full shadow-lg transition-transform hover:scale-110">
-                <Heart size={18} />
-              </button>
-            </div>
-            <div className="flex items-center gap-2 text-white">
-              <img
-                src={image.user.profile_image.small}
-                alt={image.user.name}
-                className="w-8 h-8 rounded-full"
-              />
-              <span className="text-sm font-medium">{image.user.name}</span>
             </div>
           </div>
         )}
@@ -256,79 +192,89 @@ const PinterestClone = () => {
   // --------------------------- MAIN UI ---------------------------
   return (
     <div className="min-h-screen bg-white">
-      {/* ---------- HEADER ---------- */}
+      {/* HEADER */}
       <header className="fixed top-0 left-0 right-0 bg-white z-50 shadow-sm">
-        <div className="max-w-screen-2xl mx-auto px-4 py-3 flex items-center gap-4">
+        <div className="max-w-screen-2xl mx-auto px-4 py-3 flex items-center justify-between">
+
+          {/* LEFT SECTION */}
           <div className="flex items-center gap-6">
             <h1 className="text-2xl font-bold text-red-600">Snaply</h1>
-            <nav className="hidden md:flex gap-4">
-              <button className="px-4 py-2 rounded-full bg-black text-white hover:bg-gray-800 flex items-center gap-1">
-                <Home size={18} /> Home
-              </button>
-              <button className="px-4 py-2 rounded-full hover:bg-gray-100">
-                Explore
-              </button>
 
-              {/* AI CREATE BUTTON */}
-              <button
-                onClick={() => setAiModal(true)}
-                className="px-4 py-2 rounded-full bg-gradient-to-r from-red-600 to-pink-600 text-white hover:from-red-700 hover:to-pink-700 flex items-center gap-2 shadow-md"
-              >
-                <Sparkles size={18} />
-                AI Create
-              </button>
-            </nav>
+            <button className="px-4 py-2 rounded-full bg-black text-white flex items-center gap-1">
+              <Home size={18} /> Home
+            </button>
+
+            <button
+              onClick={() => setAiModal(true)}
+              className="px-4 py-2 rounded-full bg-red-600 text-white flex items-center gap-2"
+            >
+              <Sparkles size={18} /> AI Create
+            </button>
           </div>
 
           {/* SEARCH BAR */}
-          <div className="flex-1 max-w-3xl">
+          <div className="flex-1 max-w-xl mx-6">
             <div className="relative">
-              <Search
-                className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400"
-                size={20}
-              />
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
               <input
-                type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onKeyPress={(e) => e.key === "Enter" && handleSearch(e)}
-                placeholder="Search for ideas..."
-                className="w-full pl-12 pr-4 py-3 rounded-full bg-gray-100 hover:bg-gray-200 focus:bg-white focus:ring-2 focus:ring-red-500 outline-none transition"
+                placeholder="Search…"
+                className="w-full pl-12 pr-4 py-3 rounded-full bg-gray-100 focus:ring-2 focus:ring-red-500"
               />
             </div>
           </div>
 
-          {/* USER SECTION */}
-          <div className="flex items-center gap-3">
+          {/* RIGHT SECTION */}
+          <div className="flex items-center gap-4">
             <button className="p-2 hover:bg-gray-100 rounded-full">
-              <Bell size={24} className="text-gray-600" />
+              <Bell size={22} />
             </button>
-            <div className="w-9 h-9 rounded-full bg-gradient-to-r from-red-600 to-pink-600"></div>
+
+            {/* PROFILE ICON */}
+            {user?.photoURL && !imageLoadFailed ? (
+              <img
+                src={user.photoURL}
+                alt={user.displayName || "User"}
+                className="w-9 h-9 rounded-full object-cover border-2 border-red-500"
+                crossOrigin="anonymous"
+                referrerPolicy="no-referrer"
+                onError={(e) => {
+                  console.error("Image load error:", e);
+                  setImageLoadFailed(true);
+                }}
+                onLoad={() => console.log("Image loaded successfully")}
+              />
+            ) : (
+              <div className="w-9 h-9 rounded-full bg-gradient-to-r from-red-600 to-pink-600 flex items-center justify-center text-white text-xs font-bold">
+                {user?.displayName?.charAt(0).toUpperCase() || "U"}
+              </div>
+            )}
+
+            {/* LOGOUT BUTTON (FIXED & VISIBLE) */}
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-1 px-3 py-2 text-red-600 hover:bg-red-50 rounded-full border border-red-300"
+            >
+              <LogOut size={18} />
+              Logout
+            </button>
           </div>
         </div>
       </header>
 
-      {/* ---------- MAIN GRID ---------- */}
+      {/* GRID */}
       <main className="max-w-screen-2xl mx-auto px-4 pt-24 pb-8">
-        {images.length === 0 && !loading ? (
-          <div className="text-center py-20">
-            <Search size={64} className="mx-auto text-gray-300 mb-4" />
-            <h2 className="text-2xl font-semibold text-gray-700 mb-2">
-              Start searching
-            </h2>
-            <p className="text-gray-500">Type something above to see pins</p>
-          </div>
-        ) : (
-          <div className="columns-2 md:columns-3 lg:columns-4 xl:columns-5 gap-4">
-            {images.map((img, i) => (
-              <ImageCard key={img.id} image={img} index={i} />
-            ))}
-          </div>
-        )}
+        <div className="columns-2 md:columns-3 lg:columns-4 gap-4">
+          {images.map((img, i) => (
+            <ImageCard key={img.id} image={img} index={i} />
+          ))}
+        </div>
 
         {loading && (
-          <div className="flex justify-center py-8">
-            <div className="animate-spin rounded-full h-12 w-12 border-4 border-gray-200 border-t-red-600"></div>
+          <div className="flex justify-center py-6">
+            <div className="h-10 w-10 rounded-full border-4 border-gray-300 border-t-red-600 animate-spin"></div>
           </div>
         )}
       </main>
